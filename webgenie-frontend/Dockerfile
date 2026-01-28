@@ -1,11 +1,11 @@
 # Build stage
-FROM node:18-alpine as builder
+FROM node:20-alpine as builder
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (retry to mitigate transient registry timeouts)
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=2000
 
 # Copy source code
 COPY . .

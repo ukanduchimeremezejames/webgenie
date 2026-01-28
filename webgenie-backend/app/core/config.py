@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     """Application settings with environment variable support."""
 
     # Project Info
-    PROJECT_NAME: str = "WebGenie - Beeline GRN Inference Backend"
+    PROJECT_NAME: str = "WebGenie Backend - Built upon the Beeline GRN Inference Platform"
     PROJECT_VERSION: str = "1.0.0"
     PROJECT_DESCRIPTION: str = "FastAPI backend for Gene Regulatory Network inference"
 
