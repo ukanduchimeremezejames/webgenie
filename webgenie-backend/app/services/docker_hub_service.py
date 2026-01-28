@@ -1,7 +1,6 @@
 """
 Services for managing algorithms from Docker Hub and running them in containers.
 """
-
 import logging
 import json
 from typing import Optional, List, Dict, Any
