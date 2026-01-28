@@ -1,0 +1,86 @@
+version: 1
+
+# Choreo Frontend Service Configuration
+metadata:
+  name: webgenie-frontend
+  description: WebGenie Frontend UI - Gene Regulatory Network Inference Platform
+  version: 1.0.0
+
+# Component definition
+components:
+  - name: frontend
+    type: web
+    source:
+      location: ./webgenie-frontend
+
+# Build configuration
+build:
+  kind: dockerfile
+  dockerfile: Dockerfile
+  context: ./webgenie-frontend
+  args:
+    - VITE_API_URL=${VITE_API_URL}
+
+# Runtime configuration
+runtime:
+  type: nodejs
+  version: 18
+  port: 80
+
+# Exposed endpoints
+endpoints:
+  - name: web
+    path: /
+    port: 80
+    method: http
+    protocols:
+      - http
+      - https
+
+# Environment variables
+environment:
+  VITE_API_URL: ${VITE_API_URL}
+  NODE_ENV: production
+
+# Deployment configuration
+deployment:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  strategy:
+    type: rolling
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+# Health check configuration
+healthcheck:
+  enabled: true
+  path: /
+  initialDelay: 10
+  period: 30
+  timeout: 10
+  threshold: 3
+
+# CDN and caching configuration
+cdn:
+  enabled: true
+  caching:
+    static: 86400  # 1 day for static assets
+    dynamic: 0     # No caching for dynamic content
+
+# Custom domain configuration
+customDomain:
+  enabled: true
+  # Update with your actual domain
+  domain: webgenie.yourdomain.com
+
+# SSL/TLS configuration
+ssl:
+  enabled: true
+  autoRenewal: true

@@ -1,0 +1,249 @@
+version: "3.9"
+
+services:
+  # ==================== DATABASE ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: webgenie-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-webgenie}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-webgenie_secure_password}
+      POSTGRES_DB: ${DB_NAME:-webgenie_db}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-webgenie}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - webgenie-network
+
+  # ==================== CACHE & MESSAGE BROKER ====================
+  redis:
+    image: redis:7-alpine
+    container_name: webgenie-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - webgenie-network
+
+  # ==================== BACKEND API ====================
+  backend:
+    build:
+      context: ./webgenie-backend
+      dockerfile: Dockerfile
+    container_name: webgenie-backend
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    ports:
+      - "8000:8000"
+    environment:
+      # Server Configuration
+      DEBUG: ${DEBUG:-False}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # Database Configuration
+      DATABASE_URL: postgresql://${DB_USER:-webgenie}:${DB_PASSWORD:-webgenie_secure_password}@postgres:5432/${DB_NAME:-webgenie_db}
+      
+      # Redis Configuration
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      
+      # File Paths
+      DATA_DIR: /data
+      RESULTS_DIR: /data/results
+      DATASETS_DIR: /data/datasets
+      TEMP_DIR: /tmp/webgenie
+      
+      # Job Configuration
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-4}
+      JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-86400}
+      
+      # HuggingFace Configuration
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_DATASET_ORG: cskokgibbs
+      HF_DATASET_PREFIX: datasets
+      
+      # Docker Configuration
+      DOCKER_REGISTRY: grnbeeline
+      USE_DOCKER: "True"
+      
+      # CORS Configuration
+      CORS_ORIGINS: "http://localhost,http://localhost:3000,http://localhost:5173,http://localhost:80,http://127.0.0.1,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:80"
+    
+    volumes:
+      - ./webgenie-backend:/app
+      - /data/results:/data/results
+      - /data/datasets:/data/datasets
+      - /tmp/webgenie:/tmp/webgenie
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    
+    networks:
+      - webgenie-network
+
+  # ==================== CELERY WORKER ====================
+  celery_worker:
+    build:
+      context: ./webgenie-backend
+      dockerfile: Dockerfile
+    container_name: webgenie-celery-worker
+    command: celery -A app.core.tasks worker --loglevel=info --concurrency=4 --time-limit=86400
+    environment:
+      DEBUG: ${DEBUG:-False}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: postgresql://${DB_USER:-webgenie}:${DB_PASSWORD:-webgenie_secure_password}@postgres:5432/${DB_NAME:-webgenie_db}
+      DATA_DIR: /data
+      RESULTS_DIR: /data/results
+      DATASETS_DIR: /data/datasets
+      TEMP_DIR: /tmp/webgenie
+      DOCKER_REGISTRY: grnbeeline
+      USE_DOCKER: "True"
+    
+    volumes:
+      - ./webgenie-backend:/app
+      - /data/results:/data/results
+      - /data/datasets:/data/datasets
+      - /tmp/webgenie:/tmp/webgenie
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    depends_on:
+      - redis
+      - backend
+      - postgres
+    
+    networks:
+      - webgenie-network
+
+  # ==================== CELERY BEAT (Scheduled Tasks) ====================
+  celery_beat:
+    build:
+      context: ./webgenie-backend
+      dockerfile: Dockerfile
+    container_name: webgenie-celery-beat
+    command: celery -A app.core.tasks beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      DEBUG: ${DEBUG:-False}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: postgresql://${DB_USER:-webgenie}:${DB_PASSWORD:-webgenie_secure_password}@postgres:5432/${DB_NAME:-webgenie_db}
+    
+    volumes:
+      - ./webgenie-backend:/app
+    
+    depends_on:
+      - redis
+      - backend
+      - postgres
+    
+    networks:
+      - webgenie-network
+
+  # ==================== CELERY MONITORING (Flower) ====================
+  flower:
+    build:
+      context: ./webgenie-backend
+      dockerfile: Dockerfile
+    container_name: webgenie-flower
+    command: celery -A app.core.tasks flower --port=5555 --broker=redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    
+    volumes:
+      - ./webgenie-backend:/app
+    
+    depends_on:
+      - redis
+      - backend
+    
+    networks:
+      - webgenie-network
+
+  # ==================== FRONTEND ====================
+  frontend:
+    build:
+      context: ./webgenie-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    container_name: webgenie-frontend
+    ports:
+      - "80:80"
+      - "3000:3000"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+      NODE_ENV: ${NODE_ENV:-production}
+    
+    depends_on:
+      - backend
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - webgenie-network
+
+  # ==================== PGADMIN (Database UI - Optional) ====================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: webgenie-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - webgenie-network
+
+# ==================== NETWORKS ====================
+networks:
+  webgenie-network:
+    driver: bridge
+
+# ==================== VOLUMES ====================
+volumes:
+  postgres_data:
+  redis_data:

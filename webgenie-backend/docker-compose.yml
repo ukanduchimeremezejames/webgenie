@@ -1,0 +1,110 @@
+version: "3.8"
+
+services:
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: webgenie-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webgenie-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=sqlite:///./webgenie.db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - USE_DOCKER=True
+    volumes:
+      - ./:/app
+      - /data/results:/data/results
+      - /data/datasets:/data/datasets
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webgenie-celery-worker
+    command: celery -A app.core.tasks worker --loglevel=info --concurrency=4
+    environment:
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - USE_DOCKER=True
+    volumes:
+      - ./:/app
+      - /data/results:/data/results
+      - /data/datasets:/data/datasets
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+      - backend
+
+  # Celery Beat (for scheduled tasks)
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webgenie-celery-beat
+    command: celery -A app.core.tasks beat --loglevel=info
+    environment:
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+      - backend
+
+  # Flower (Celery monitoring)
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webgenie-flower
+    command: celery -A app.core.tasks flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+      - backend
+
+volumes:
+  redis_data:
