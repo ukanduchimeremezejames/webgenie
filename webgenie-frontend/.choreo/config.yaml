@@ -1,0 +1,75 @@
+specVersion: 1.0.0
+metadata:
+  name: webgenie-frontend
+  description: React frontend for WebGenie - ML dataset inference platform
+  version: 1.0.0
+  owner: your-org
+
+service:
+  serviceType: web
+  
+  containerConfig:
+    image:
+      name: webgenie-frontend
+    port: 80
+    
+    env:
+      # API Configuration
+      - name: VITE_API_URL
+        value: https://webgenie-backend.choreo.dev
+      - name: VITE_API_TIMEOUT
+        value: "30000"
+      
+      # Feature Flags
+      - name: VITE_ENABLE_ANALYTICS
+        value: "true"
+      - name: VITE_ENVIRONMENT
+        value: production
+    
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    
+    # Health check endpoint
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 80
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 2
+  
+  # Scaling configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 80
+    targetMemoryUtilization: 85
+  
+  # Ingress configuration
+  ingress:
+    enabled: true
+    path: /
+  
+  # Build configuration
+  buildConfig:
+    buildpack: docker
+    dockerfile: Dockerfile
+    context: ./webgenie-frontend
