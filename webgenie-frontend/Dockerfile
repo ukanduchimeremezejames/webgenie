@@ -1,40 +1,47 @@
-# Runtime stage - use pre-built dist folder
-FROM nginx:alpine
+# -------------------------------------------------------
+# Stage 1: Builder
+# -------------------------------------------------------
+FROM python:3.11-slim AS builder
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY default.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-# Copy pre-built application
-COPY dist /usr/share/nginx/html
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create a script to handle environment variables
-COPY docker-entrypoint.sh /
-RUN chmod +x /docker-entrypoint.sh
+COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --user --no-cache-dir -r requirements.txt
 
-# Expose port
-EXPOSE 80
+# -------------------------------------------------------
+# Stage 2: Runtime Image
+# -------------------------------------------------------
+FROM python:3.11-slim
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+WORKDIR /app
 
-# Run entrypoint
-ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
+# Copy built Python packages
+COPY --from=builder /root/.local /root/.local
+ENV PATH="/root/.local/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
+# Copy source
+COPY ./app /app/app
+COPY ./.env.example /app/.env
 
-# Create a script to handle environment variables
-COPY docker-entrypoint.sh /
-RUN chmod +x /docker-entrypoint.sh
+RUN mkdir -p /data/results /data/datasets /var/log/webgenie
 
-# Expose port
-EXPOSE 80
+# Choreo-compliant user (MUST be 10000–20000)
+RUN useradd -m -u 10001 webgenie && \
+    chown -R webgenie:webgenie /app /data /var/log/webgenie
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+USER 10001
 
-# Run entrypoint
-ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
