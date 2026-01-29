@@ -1,99 +1,50 @@
-version: 1
+name: webgenie-backend
+version: 1.0.0
+type: service
 
-# Choreo Backend Service Configuration
-metadata:
-  name: webgenie-backend
-  description: WebGenie Backend API with Gene Regulatory Network Inference
-  version: 1.0.0
-
-# Component definition
-components:
-  - name: backend
-    type: api
-    source:
-      location: ./webgenie-backend
-      
-# Build configuration
 build:
-  kind: dockerfile
   dockerfile: Dockerfile
-  context: ./webgenie-backend
+  context: .
 
-# Runtime configuration
-runtime:
-  type: python3
-  version: 3.11
-  port: 8000
+deploy:
+  replicaCount: 1
+  env:
+    - name: ENVIRONMENT
+      value: "production"
+    - name: WEBGENIE_LOG_DIR
+      value: "/var/log/webgenie"
 
-# Exposed endpoints
-endpoints:
-  - name: api
-    path: /api/v1
-    port: 8000
-    method: rest
-    protocols:
-      - http
-      - https
+  container:
+    ports:
+      - name: http
+        containerPort: 8000
 
-# Environment variables
-environment:
-  DEBUG: 'False'
-  LOG_LEVEL: INFO
-  DATABASE_URL: ${DB_URL}
-  REDIS_URL: ${REDIS_URL}
-  CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-  DATA_DIR: /data
-  RESULTS_DIR: /data/results
-  DATASETS_DIR: /data/datasets
-  TEMP_DIR: /tmp/webgenie
-  HF_TOKEN: ${HF_TOKEN}
-  USE_DOCKER: 'true'
-  DOCKER_REGISTRY: grnbeeline
-  CORS_ORIGINS: ${CORS_ORIGINS}
+  ingress:
+    enabled: true
+    type: Public
+    paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          port: http
 
-# Deployment configuration
-deployment:
-  replicas: 1
-  resources:
-    requests:
-      cpu: 1000m
-      memory: 2Gi
-    limits:
-      cpu: 2000m
-      memory: 4Gi
-  strategy:
-    type: rolling
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 3
+    cpu:
+      targetAverageUtilization: 70
 
-# Health check configuration
-healthcheck:
-  enabled: true
-  path: /health
-  initialDelay: 10
-  period: 30
-  timeout: 10
-  threshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
 
-# Volume mounts
-volumes:
-  - name: data
-    path: /data
-    size: 10Gi
-  - name: temp
-    path: /tmp/webgenie
-    size: 5Gi
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
 
-# Dependency services
-dependencies:
-  - type: postgresql
-    name: webgenie-db
-    version: 16
-    capacity: 1Gi
-    
-  - type: redis
-    name: webgenie-redis
-    version: 7-alpine
-    capacity: 500Mi
