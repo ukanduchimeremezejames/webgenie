@@ -3,7 +3,7 @@ API endpoints for dataset management.
 """
 
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, status, Depends
+from fastapi import APIRouter, Query, HTTPException, status
 from fastapi.responses import FileResponse
 import logging
 
@@ -15,17 +15,9 @@ from app.models.dataset import (
     DatasetUpdate,
 )
 from app.services.datasets_service import dataset_service
-from app.core.auth import verify_api_key
-
 
 logger = logging.getLogger(__name__)
-# router = APIRouter(prefix="/datasets", tags=["datasets"])
-router = APIRouter(
-    prefix="/datasets",
-    tags=["datasets"],
-    dependencies=[Depends(verify_api_key)]
-)
-
+router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
 @router.post("/register", response_model=DatasetResponse, status_code=status.HTTP_201_CREATED)
